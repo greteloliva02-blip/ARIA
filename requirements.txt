@@ -1,0 +1,11 @@
+# ARIA minimal cloud dependencies (fast deploy)
+python-dotenv>=1.0.0
+python-telegram-bot>=21.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-mistralai>=0.2.0
+httpx>=0.27.0
+duckduckgo-search>=6.0
+
+# Optional: Firebase backup (skipped automatically if creds missing)
+firebase-admin>=6.0.0
