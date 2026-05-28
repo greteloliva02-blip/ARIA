@@ -155,7 +155,7 @@ class TelegramBot(BaseInterface):
             f"• 🤖 Modelo: `{self.config.MISTRAL_MODEL}`\n"
             f"• 🔧 Herramientas: {len(self.agent.tools)}\n"
             f"• 📦 Tools: _{tools_list}_\n"
-            f"• 🧠 Memoria: SQLite + ChromaDB\n"
+            f"• Memoria: SQLite\n"
             f"• ✅ Sistema operativo\n"
         )
         await update.message.reply_text(text, parse_mode="Markdown")
@@ -172,9 +172,11 @@ class TelegramBot(BaseInterface):
         user_id = str(update.effective_user.id)
         message = update.message.text
 
-        # Typing indicator
-        await update.message.chat.send_action("typing")
-        logger.info(f"📩 [{user_id}] {message[:80]}")
+        try:
+            await update.message.chat.send_action("typing")
+        except Exception as e:
+            logger.warning("Typing indicator failed: %s", e)
+        logger.info("[%s] %s", user_id, message[:80])
 
         # Process with ARIA agent
         response = await self.agent.process_message(user_id, message)
@@ -221,16 +223,20 @@ class TelegramBot(BaseInterface):
 
     # ── Interface Methods ──────────────────────────────────
     async def start(self):
-        logger.info("Starting ARIA Telegram Bot...")
+        logger.info("Starting Telegram bot...")
         await self.app.initialize()
         await self.app.start()
-        # Polling mode: clear webhook to avoid duplicate delivery / conflicts
+        # Polling only — remove webhook to prevent 409 conflicts
         await self.app.bot.delete_webhook(drop_pending_updates=True)
+        if self.app.updater.running:
+            logger.warning("Updater already running; skipping second start.")
+            return
         await self.app.updater.start_polling(
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
+            bootstrap_retries=-1,
         )
-        logger.info("Telegram bot running (polling, single instance).")
+        logger.info("Telegram polling active (single instance).")
 
     async def stop(self):
         logger.info("🛑 Stopping Telegram Bot...")
