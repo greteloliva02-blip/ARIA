@@ -118,8 +118,28 @@ async def main() -> None:
     logger.info("ARIA stopped.")
 
 
+def bootstrap_google_credentials() -> None:
+    """Write Google OAuth files from Railway secrets before the agent starts."""
+    try:
+        from core.cloud_bootstrap import bootstrap_cloud_environment
+
+        bootstrap_cloud_environment(ROOT)
+        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_NAME"):
+            data = Path(os.getenv("ARIA_DATA_DIR", str(ROOT / "memory")))
+            gdir = data / "google_credentials"
+            if (gdir / "token.json").exists():
+                os.environ.setdefault("GOOGLE_CREDENTIALS_DIR", str(gdir))
+                os.environ.setdefault("GOOGLE_TOKEN_PATH", str(gdir / "token.json"))
+                os.environ.setdefault(
+                    "GOOGLE_CLIENT_SECRET_PATH", str(gdir / "client_secret.json")
+                )
+    except Exception as e:
+        print(f"WARNING: Google bootstrap skipped: {e}", file=sys.stderr, flush=True)
+
+
 def run_forever() -> None:
     validate_env()
+    bootstrap_google_credentials()
     start_health_if_needed()
 
     from core.logger import get_logger

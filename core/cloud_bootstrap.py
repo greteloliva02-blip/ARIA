@@ -1,5 +1,5 @@
 """
-Bootstrap secrets and paths when running in cloud (Fly.io).
+Bootstrap secrets and paths when running in cloud (Railway, Fly.io).
 """
 import json
 import os
@@ -42,6 +42,9 @@ def bootstrap_cloud_environment(project_root: Path) -> None:
 
 
 def _is_cloud() -> bool:
-    return os.getenv("ARIA_CLOUD", "").lower() in ("1", "true", "yes", "on") or bool(
-        os.getenv("FLY_APP_NAME")
+    return bool(
+        os.getenv("RAILWAY_ENVIRONMENT")
+        or os.getenv("RAILWAY_SERVICE_NAME")
+        or os.getenv("FLY_APP_NAME")
+        or os.getenv("ARIA_CLOUD", "").lower() in ("1", "true", "yes", "on")
     )

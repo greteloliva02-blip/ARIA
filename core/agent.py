@@ -1,6 +1,8 @@
 import json
+import os
 import re
 from datetime import datetime
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -12,26 +14,21 @@ from tools.web_tool import get_web_tools
 
 logger = get_logger("agent")
 
-MINIMAL_SYSTEM_PROMPT = """\
+_SYSTEM_TEMPLATE = """\
 Eres ARIA, asistente personal por Telegram.
 
-Responde SIEMPRE con un JSON valido (sin markdown, sin texto extra):
+Responde SIEMPRE con un JSON valido (sin markdown, sin texto extra).
 
-{
-  "action": "none",
-  "response": "tu respuesta al usuario en espanol"
-}
+Acciones permitidas (solo estas): {action_list}
 
-Si necesitas buscar en internet usa:
+Ejemplos:
 
-{
-  "action": "web_search",
-  "data": { "query": "texto de busqueda", "max_results": 3 }
-}
+{action_examples}
 
 Reglas:
-- action solo puede ser "none" o "web_search"
-- nunca inventes otras acciones
+- usa solo acciones de la lista
+- para charla normal usa action "none" con "response"
+- para herramientas usa "action" + "data" (sin "response")
 - se amable, breve y util
 
 Hechos del usuario:
@@ -43,11 +40,57 @@ Historial reciente:
 Fecha y hora: {current_time}
 """
 
+_ACTION_EXAMPLES = {
+    "none": """{
+  "action": "none",
+  "response": "tu respuesta al usuario en espanol"
+}""",
+    "web_search": """{
+  "action": "web_search",
+  "data": { "query": "texto de busqueda", "max_results": 3 }
+}""",
+    "read_emails": """{
+  "action": "read_emails",
+  "data": { "query": "is:unread", "max_results": 5 }
+}""",
+    "send_email": """{
+  "action": "send_email",
+  "data": { "to": "correo@ejemplo.com", "subject": "Asunto", "body": "Mensaje" }
+}""",
+    "list_calendar_events": """{
+  "action": "list_calendar_events",
+  "data": { "days_ahead": 7, "max_results": 10 }
+}""",
+    "create_calendar_event": """{
+  "action": "create_calendar_event",
+  "data": {
+    "summary": "Reunion",
+    "start_time": "2026-05-28T10:00:00",
+    "end_time": "2026-05-28T11:00:00",
+    "description": ""
+  }
+}""",
+}
 
-def _build_system_prompt(user_facts: str, memory_context: str, current_time: str) -> str:
+
+def _build_system_prompt(
+    registered_tools: list[str],
+    user_facts: str,
+    memory_context: str,
+    current_time: str,
+) -> str:
     """Fill prompt placeholders without str.format (JSON braces break .format)."""
+    tool_actions = [a for a in registered_tools if a != "none"]
+    action_list = ", ".join(['"none"'] + [f'"{a}"' for a in tool_actions])
+
+    example_keys = ["none"] + tool_actions
+    blocks = [_ACTION_EXAMPLES[k] for k in example_keys if k in _ACTION_EXAMPLES]
+    action_examples = "\n\n".join(blocks) if blocks else _ACTION_EXAMPLES["none"]
+
     return (
-        MINIMAL_SYSTEM_PROMPT.replace("{user_facts}", user_facts)
+        _SYSTEM_TEMPLATE.replace("{action_list}", action_list)
+        .replace("{action_examples}", action_examples)
+        .replace("{user_facts}", user_facts)
         .replace("{memory_context}", memory_context)
         .replace("{current_time}", current_time)
     )
@@ -83,13 +126,55 @@ class AriaAgent:
             ) from e
 
     def _load_tools(self):
+        self.tools = []
         try:
-            self.tools = [get_web_tools()[0]]  # web_search only for stability
-            logger.info("Loaded tools: %s", [t.name for t in self.tools])
+            self.tools.append(get_web_tools()[0])
         except Exception as e:
-            logger.warning("Tools not loaded: %s", e)
-            self.tools = []
+            logger.warning("web_search not loaded: %s", e)
+
+        self.tools.extend(self._load_google_tools_if_ready())
         self.dispatcher.register_tools(self.tools)
+        logger.info("Loaded tools: %s", [t.name for t in self.tools])
+
+    def _has_google_credentials(self) -> bool:
+        if (os.getenv("GOOGLE_TOKEN_JSON") or "").strip():
+            return True
+        cred_dir = Path(
+            os.getenv(
+                "GOOGLE_CREDENTIALS_DIR",
+                str(self.config.PROJECT_ROOT / "google_credentials"),
+            )
+        )
+        return (cred_dir / "token.json").exists()
+
+    def _load_google_tools_if_ready(self) -> list:
+        if os.getenv("DISABLE_GOOGLE", "").lower() in ("1", "true", "yes", "on"):
+            logger.info("Google tools disabled (DISABLE_GOOGLE).")
+            return []
+        if not self._has_google_credentials():
+            logger.info("No Google token; Gmail/Calendar disabled.")
+            return []
+        try:
+            from services.google.gmail import GmailService
+            from tools.gmail_tool import get_gmail_tools
+            from tools.calendar_tool import get_calendar_tools
+        except ImportError:
+            logger.warning(
+                "Google API packages missing. Install: pip install -r requirements.txt"
+            )
+            return []
+
+        try:
+            if not GmailService(self.config).is_ready():
+                logger.warning("Google token found but Gmail auth failed.")
+                return []
+        except Exception as e:
+            logger.warning("Google auth check failed: %s", e)
+            return []
+
+        tools = get_gmail_tools() + get_calendar_tools()
+        logger.info("Google OK — Gmail + Calendar enabled.")
+        return tools
 
     async def process_message(self, user_id: str, message: str) -> str:
         try:
@@ -112,7 +197,12 @@ class AriaAgent:
 
             messages = [
                 SystemMessage(
-                    content=_build_system_prompt(facts_str, memory_ctx, current_time)
+                    content=_build_system_prompt(
+                        self.dispatcher.get_registered_actions(),
+                        facts_str,
+                        memory_ctx,
+                        current_time,
+                    )
                 ),
                 HumanMessage(content=message),
             ]
@@ -166,7 +256,8 @@ class AriaAgent:
         if action == "none":
             return str(intent.get("response", raw)).strip() or raw
 
-        if action == "web_search" and action in self.dispatcher.get_registered_actions():
+        registered = self.dispatcher.get_registered_actions()
+        if action in registered:
             data = intent.get("data", {})
             if not isinstance(data, dict):
                 data = {}

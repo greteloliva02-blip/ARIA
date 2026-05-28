@@ -67,10 +67,10 @@ def get_google_credentials(config=None):
                 )
                 return None
 
-            if os.getenv("ARIA_CLOUD", "").lower() in ("1", "true", "yes", "on") or os.getenv("FLY_APP_NAME"):
+            if _is_cloud_runtime():
                 logger.error(
                     "Google OAuth browser flow unavailable in cloud. "
-                    "Set GOOGLE_TOKEN_JSON secret with a pre-authorized token."
+                    "Run auth_google.py on your PC, then set GOOGLE_TOKEN_JSON in Railway."
                 )
                 return None
 
@@ -87,3 +87,12 @@ def get_google_credentials(config=None):
         logger.info(f"Token saved to {token_path}")
 
     return creds
+
+
+def _is_cloud_runtime() -> bool:
+    return bool(
+        os.getenv("RAILWAY_ENVIRONMENT")
+        or os.getenv("RAILWAY_SERVICE_NAME")
+        or os.getenv("FLY_APP_NAME")
+        or os.getenv("ARIA_CLOUD", "").lower() in ("1", "true", "yes", "on")
+    )

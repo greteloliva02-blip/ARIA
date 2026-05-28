@@ -14,7 +14,7 @@ def main():
     print(" Iniciando autenticacion de Google (OAuth2)")
     print("="*60)
     
-    creds_dir = Path("C:/ARIA/google_credentials")
+    creds_dir = Path(__file__).resolve().parent / "google_credentials"
     client_secret_path = creds_dir / "client_secret.json"
     token_path = creds_dir / "token.json"
     
