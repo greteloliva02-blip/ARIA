@@ -1,6 +1,6 @@
 """
-ARIA — Main entrypoint (minimal cloud-ready).
-Telegram polling + Mistral + optional SQLite/Firebase memory.
+ARIA — Main entrypoint for local and Railway.
+Telegram polling + Mistral API.
 """
 import asyncio
 import os
@@ -16,19 +16,64 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = Path(__file__).parent.resolve()
+sys.path.insert(0, str(ROOT))
 
-from core.config import Config
-from core.memory import MemoryManager
-from core.agent import AriaAgent
-from core.logger import get_logger
-from interfaces.telegram_bot import TelegramBot
-
-logger = get_logger("main")
+_REQUIRED_ENV = ("TELEGRAM_TOKEN", "MISTRAL_API_KEY")
 
 
-async def main():
+def missing_env_vars() -> list[str]:
+    missing = []
+    for name in _REQUIRED_ENV:
+        if not (os.getenv(name) or "").strip():
+            missing.append(name)
+    return missing
+
+
+def validate_env() -> None:
+    """Fail fast before imports that need secrets (Railway injects env at runtime)."""
+    missing = missing_env_vars()
+    if not missing:
+        return
+    cloud = bool(
+        os.getenv("RAILWAY_ENVIRONMENT")
+        or os.getenv("RAILWAY_SERVICE_NAME")
+        or os.getenv("PORT")
+    )
+    hint = (
+        "Add them in Railway: Project → your service → Variables → Raw Editor, "
+        "then Redeploy."
+        if cloud
+        else "Add them to your local .env file."
+    )
+    msg = "FATAL: Missing environment variables: " + ", ".join(missing) + ". " + hint
+    print(msg, file=sys.stderr, flush=True)
+    sys.exit(1)
+
+
+def start_health_if_needed() -> None:
+    port = (os.getenv("PORT") or "").strip()
+    if not port:
+        return
+    try:
+        from core.health_server import start_health_server
+
+        start_health_server(int(port))
+        print(f"Health server listening on 0.0.0.0:{port}", flush=True)
+    except Exception as e:
+        print(f"WARNING: Health server failed: {e}", file=sys.stderr, flush=True)
+
+
+async def main() -> None:
+    from core.config import Config
+    from core.memory import MemoryManager
+    from core.agent import AriaAgent
+    from core.logger import get_logger
+    from interfaces.telegram_bot import TelegramBot
+
+    logger = get_logger("main")
     logger.info("Starting ARIA...")
+
     config = Config()
 
     if not config.TELEGRAM_TOKEN:
@@ -38,12 +83,11 @@ async def main():
         logger.error("MISTRAL_API_KEY is required.")
         sys.exit(1)
 
-    # Optional health endpoint when platform sets PORT (e.g. Railway web service)
-    port = os.getenv("PORT")
-    if port:
-        from core.health_server import start_health_server
-        start_health_server(int(port))
-        logger.info("Health server on port %s", port)
+    logger.info(
+        "ARIA starting (cloud=%s, model=%s)",
+        config.IS_CLOUD,
+        config.MISTRAL_MODEL,
+    )
 
     memory = MemoryManager(config)
     agent = AriaAgent(config, memory)
@@ -51,44 +95,49 @@ async def main():
 
     await bot.start()
 
-    logger.info("ARIA is running (Telegram polling, single instance).")
-    logger.info("Model: %s | Minimal mode: %s", config.MISTRAL_MODEL, config.MINIMAL_MODE)
+    logger.info("ARIA is running — Telegram polling active (single instance).")
 
     stop_event = asyncio.Event()
 
-    def _signal_handler(*_):
+    def _on_stop(*_):
         logger.info("Shutdown signal received.")
         stop_event.set()
 
     if sys.platform != "win32":
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                loop.add_signal_handler(sig, _signal_handler)
-            except NotImplementedError:
-                signal.signal(sig, _signal_handler)
+                loop.add_signal_handler(sig, _on_stop)
+            except (NotImplementedError, RuntimeError):
+                signal.signal(sig, lambda *_: _on_stop())
     else:
-        signal.signal(signal.SIGINT, _signal_handler)
+        signal.signal(signal.SIGINT, lambda *_: _on_stop())
 
     await stop_event.wait()
-
-    logger.info("Shutting down...")
     await bot.stop()
     logger.info("ARIA stopped.")
 
 
-def run_forever():
-    """Restart on crash so the bot recovers without manual intervention."""
+def run_forever() -> None:
+    validate_env()
+    start_health_if_needed()
+
+    from core.logger import get_logger
+
+    logger = get_logger("main")
+
     while True:
         try:
             asyncio.run(main())
             break
         except KeyboardInterrupt:
-            logger.info("Interrupted by user.")
+            logger.info("Stopped by user.")
             break
         except SystemExit:
             raise
         except Exception as e:
+            if missing_env_vars():
+                validate_env()
             logger.error("ARIA crashed: %s", e, exc_info=True)
             logger.info("Restarting in 15 seconds...")
             time.sleep(15)
