@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -155,7 +156,6 @@ class AriaAgent:
             logger.info("No Google token; Gmail/Calendar disabled.")
             return []
         try:
-            from services.google.gmail import GmailService
             from tools.gmail_tool import get_gmail_tools
             from tools.calendar_tool import get_calendar_tools
         except ImportError:
@@ -164,24 +164,16 @@ class AriaAgent:
             )
             return []
 
-        try:
-            if not GmailService(self.config).is_ready():
-                logger.warning("Google token found but Gmail auth failed.")
-                return []
-        except Exception as e:
-            logger.warning("Google auth check failed: %s", e)
-            return []
-
         tools = get_gmail_tools() + get_calendar_tools()
         logger.info("Google OK — Gmail + Calendar enabled.")
         return tools
 
     async def process_message(self, user_id: str, message: str) -> str:
         try:
-            self.memory.save_message(user_id, "human", message)
+            await asyncio.to_thread(self.memory.save_message, user_id, "human", message)
 
-            history = self.memory.get_history(user_id, limit=10)
-            facts = self.memory.get_facts(user_id)
+            history = await asyncio.to_thread(self.memory.get_history, user_id, 10)
+            facts = await asyncio.to_thread(self.memory.get_facts, user_id)
             facts_str = (
                 "\n".join(f"- {k}: {v}" for k, v in facts.items())
                 if facts
@@ -210,8 +202,8 @@ class AriaAgent:
             raw = await self._call_llm(messages)
             reply = await self._handle_llm_output(raw)
 
-            self.memory.save_message(user_id, "assistant", reply)
-            self._extract_facts(user_id, message)
+            await asyncio.to_thread(self.memory.save_message, user_id, "assistant", reply)
+            await asyncio.to_thread(self._extract_facts, user_id, message)
             return reply
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)

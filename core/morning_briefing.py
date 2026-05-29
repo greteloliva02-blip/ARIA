@@ -2,6 +2,7 @@
 ARIA — Scheduled morning briefing automation.
 Scheduler -> process_morning_briefing -> LLM JSON -> dispatcher -> Telegram
 """
+import asyncio
 import json
 import re
 from datetime import datetime
@@ -230,7 +231,7 @@ async def process_morning_briefing(agent, memory: MemoryManager, config: Config)
     """
     logger.info("Morning briefing scheduled trigger fired.")
     user_id = str(config.TELEGRAM_USER_ID or "default")
-    context = gather_briefing_context(memory, config, user_id)
+    context = await asyncio.to_thread(gather_briefing_context, memory, config, user_id)
     logger.info("Morning briefing context gathered (%d chars).", len(context))
 
     message_text = build_fallback_message(context)

@@ -1,4 +1,5 @@
 """Tool dispatcher — maps JSON actions to Python functions."""
+import asyncio
 import inspect
 import json
 import logging
@@ -48,7 +49,7 @@ class ToolDispatcher:
                     ):
                         payload = data if isinstance(data, dict) else {}
                         filtered = payload if _accepts_var else {k: v for k, v in payload.items() if k in _allowed}
-                        return _f(**filtered)
+                        return await asyncio.to_thread(_f, **filtered)
 
                     self._registry[action_name] = _wrapper
 

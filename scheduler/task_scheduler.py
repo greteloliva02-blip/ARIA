@@ -85,7 +85,7 @@ class TaskScheduler:
     async def _check_reminders(self):
         """Check for due reminders and send notifications."""
         try:
-            pending = self.memory.get_pending_reminders()
+            pending = await asyncio.to_thread(self.memory.get_pending_reminders)
             for r in pending:
                 msg = (
                     f"⏰ **¡Recordatorio!**\n\n"
@@ -100,7 +100,7 @@ class TaskScheduler:
                     except Exception as e:
                         logger.error(f"Failed to send reminder #{r['id']}: {e}")
 
-                self.memory.complete_reminder(r["id"])
+                await asyncio.to_thread(self.memory.complete_reminder, r["id"])
 
         except Exception as e:
             logger.error(f"Reminder check error: {e}")
