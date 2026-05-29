@@ -188,4 +188,4 @@ class TelegramBot(BaseInterface):
                 text=message,
             )
         except Exception as e:
-            logger.error(f"Failed to send message: {e}") dime cual es?
+            logger.error(f"Failed to send message: {e}")
