@@ -18,9 +18,10 @@ logger = get_logger("telegram")
 
 
 class TelegramBot(BaseInterface):
-    """Telegram bot interface for ARIA (STABLE POLLING VERSION)."""
+    """Telegram bot interface for ARIA (stable polling version)."""
 
-    def init(self, agent: AriaAgent, config: Config):
+    # ✅ CONSTRUCTOR CORRECTO
+    def __init__(self, agent: AriaAgent, config: Config):
         self.agent = agent
         self.config = config
 
@@ -41,42 +42,27 @@ class TelegramBot(BaseInterface):
         self.app.add_handler(CommandHandler("help", self._cmd_help))
         self.app.add_handler(CommandHandler("memory", self._cmd_memory))
         self.app.add_handler(CommandHandler("status", self._cmd_status))
+
         self.app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                self._handle_message,
+            )
         )
+
         self.app.add_error_handler(self._error_handler)
+
+    # ───────────────────────── AUTH ─────────────────────────
 
     def _is_authorized(self, update: Update) -> bool:
         uid = update.effective_user.id
+
         if not self.config.TELEGRAM_USER_ID:
             self.config.TELEGRAM_USER_ID = str(uid)
-            self._persist_user_id(uid)
             logger.info(f"Auto-registered user: {uid}")
             return True
+
         return self.config.is_authorized(uid)
-
-    def _persist_user_id(self, uid: int):
-        if getattr(self.config, "IS_CLOUD", False) or os.getenv("RAILWAY_ENVIRONMENT"):
-            logger.info("Cloud mode: set TELEGRAM_USER_ID in Railway secrets.")
-            return
-
-        env_path = self.config.PROJECT_ROOT / ".env"
-        try:
-            text = env_path.read_text(encoding="utf-8")
-
-            if "TELEGRAM_USER_ID=" in text:
-                lines = text.splitlines()
-                for i, line in enumerate(lines):
-                    if line.startswith("TELEGRAM_USER_ID="):
-                        lines[i] = f"TELEGRAM_USER_ID={uid}"
-                text = "\n".join(lines)
-            else:
-                text += f"\nTELEGRAM_USER_ID={uid}"
-
-            env_path.write_text(text, encoding="utf-8")
-
-        except Exception as e:
-            logger.error(f"Could not persist user ID: {e}")
 
     # ───────────────────────── COMMANDS ─────────────────────────
 
@@ -88,8 +74,7 @@ class TelegramBot(BaseInterface):
         user = update.effective_user
 
         await update.message.reply_text(
-            f"🤖 Hola {user.first_name}, ARIA está activa.\nEscribe lo que necesites.",
-            parse_mode="Markdown",
+            f"🤖 Hola {user.first_name}, ARIA está activa.\nEscribe lo que necesites."
         )
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +82,10 @@ class TelegramBot(BaseInterface):
             return
 
         await update.message.reply_text(
-            "/start - iniciar\n/help - ayuda\n/memory - memoria\n/status - estado"
+            "/start - iniciar\n"
+            "/help - ayuda\n"
+            "/memory - memoria\n"
+            "/status - estado"
         )
 
     async def _cmd_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,6 +100,7 @@ class TelegramBot(BaseInterface):
             return
 
         text = "🧠 Memoria:\n"
+
         for k, v in facts.items():
             text += f"- {k}: {v}\n"
 
@@ -122,12 +111,17 @@ class TelegramBot(BaseInterface):
             return
 
         await update.message.reply_text(
-            f"Modelo: {self.config.MISTRAL_MODEL}\nTools: {len(self.agent.tools)}"
+            f"Modelo: {self.config.MISTRAL_MODEL}\n"
+            f"Tools: {len(self.agent.tools)}"
         )
 
-    # ───────────────────────── MESSAGES ─────────────────────────
+    # ───────────────────────── MENSAJES ─────────────────────────
 
-    async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _handle_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ):
         if not self._is_authorized(update):
             await update.message.reply_text("⛔ No autorizado.")
             return
@@ -139,15 +133,27 @@ class TelegramBot(BaseInterface):
 
         try:
             await update.message.chat.send_action("typing")
-        except:
+        except Exception:
             pass
 
-        response = await self.agent.process_message(user_id, message)
+        try:
+            response = await self.agent.process_message(user_id, message)
+        except Exception as e:logger.error(f"Agent error: {e}", exc_info=True)
+            response = "⚠️ Error interno procesando el mensaje."
 
         await update.message.reply_text(response)
 
-    async def _error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.error(f"Telegram error: {context.error}", exc_info=context.error)
+    # ───────────────────────── ERROR HANDLER ─────────────────────────
+
+    async def _error_handler(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ):
+        logger.error(
+            f"Telegram error: {context.error}",
+            exc_info=context.error,
+        )
 
     # ───────────────────────── START / STOP ─────────────────────────
 
@@ -157,7 +163,7 @@ class TelegramBot(BaseInterface):
         await self.app.initialize()
         await self.app.start()
 
-        # 🔥 SOLO POLLING (sin webhook, sin Railway drama)
+        # ✅ SOLO POLLING
         await self.app.run_polling()
 
     async def stop(self):
@@ -165,16 +171,21 @@ class TelegramBot(BaseInterface):
 
         try:
             await self.app.stop()
-        except:
+        except Exception:
             pass
 
         try:
             await self.app.shutdown()
-        except:
+        except Exception:
             pass
+
+    # ───────────────────────── SEND MESSAGE ─────────────────────────
 
     async def send_message(self, user_id: str, message: str):
         try:
-            await self.app.bot.send_message(chat_id=int(user_id), text=message)
+            await self.app.bot.send_message(
+                chat_id=int(user_id),
+                text=message,
+            )
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
