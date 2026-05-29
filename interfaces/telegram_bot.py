@@ -16,7 +16,6 @@ from core.logger import get_logger
 
 logger = get_logger("telegram")
 
-
 class TelegramBot(BaseInterface):
     """Telegram bot interface for ARIA (stable polling version)."""
 
@@ -138,7 +137,8 @@ class TelegramBot(BaseInterface):
 
         try:
             response = await self.agent.process_message(user_id, message)
-        except Exception as e:logger.error(f"Agent error: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Agent error: {e}", exc_info=True)
             response = "⚠️ Error interno procesando el mensaje."
 
         await update.message.reply_text(response)
@@ -188,4 +188,4 @@ class TelegramBot(BaseInterface):
                 text=message,
             )
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
+            logger.error(f"Failed to send message: {e}") dime cual es?
