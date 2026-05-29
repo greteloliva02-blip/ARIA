@@ -226,17 +226,21 @@ class TelegramBot(BaseInterface):
         logger.info("Starting Telegram bot...")
         await self.app.initialize()
         await self.app.start()
-        # Polling only — remove webhook to prevent 409 conflicts
-        await self.app.bot.delete_webhook(drop_pending_updates=True)
-        if self.app.updater.running:
-            logger.warning("Updater already running; skipping second start.")
+
+        # Railway environment – enforce webhook
+        if os.getenv("RAILWAY_ENVIRONMENT"):
+            webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL")
+            if not webhook_url:
+                logger.error("TELEGRAM_WEBHOOK_URL not set in Railway environment – cannot start bot.")
+                return
+            try:
+                await self.app.bot.set_webhook(url=webhook_url)
+                logger.info("✅ Webhook set for Telegram bot (Railway mode). Polling disabled.")
+            except Exception as e:
+                logger.error(f"Failed to set Telegram webhook: {e}")
             return
-        await self.app.updater.start_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES,
-            bootstrap_retries=-1,
-        )
-        logger.info("Telegram polling active (single instance).")
+        # Non‑Railway environments: do not start bot
+        logger.info("Telegram bot start skipped (non‑Railway environment).")
 
     async def stop(self):
         logger.info("🛑 Stopping Telegram Bot...")

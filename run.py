@@ -139,6 +139,18 @@ def bootstrap_google_credentials() -> None:
 
 def run_forever() -> None:
     validate_env()
+    # If not running on Railway, do not start ARIA (useful for local dev or CI)
+    if not os.getenv("RAILWAY_ENVIRONMENT"):
+        from core.logger import get_logger
+        logger = get_logger("main")
+        logger.info("Non‑Railway environment detected – ARIA will not start.")
+        return
+    # Allow disabling ARIA via environment variable (optional extra control)
+    if os.getenv("ARIA_DISABLE"):
+        from core.logger import get_logger
+        logger = get_logger("main")
+        logger.info("ARIA disabled via ARIA_DISABLE env var, exiting.")
+        return
     bootstrap_google_credentials()
     start_health_if_needed()
 

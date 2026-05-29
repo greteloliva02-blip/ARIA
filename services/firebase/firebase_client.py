@@ -12,7 +12,7 @@ logger = logging.getLogger("firebase")
 
 def init_firebase():
     """Initialize Firebase app using service account credentials.
-    Reads env vars FIREBASE_CRED_PATH and FIREBASE_PROJECT_ID.
+    Reads env vars FIREBASE_CRED_PATH, FIREBASE_CRED_JSON, and FIREBASE_PROJECT_ID.
     Returns a Firestore client or None if initialization fails.
     """
     cred_path = os.getenv("FIREBASE_CRED_PATH")
@@ -20,16 +20,30 @@ def init_firebase():
     cred_json = os.getenv("FIREBASE_CRED_JSON", "").strip()
 
     try:
+        # 1️⃣ Prefer JSON string (useful for Railway secrets)
         if cred_json:
+            # The env var may contain literal newlines escaped as \n; json.loads handles this.
             cred = credentials.Certificate(json.loads(cred_json))
+        # 2️⃣ Fallback to a file path
         elif cred_path and os.path.exists(cred_path):
             cred = credentials.Certificate(cred_path)
         else:
-            logger.warning(
-                "Firebase credentials not provided; skipping Firebase integration."
-            )
+            print("Firebase credentials not provided")
             return None
-        # Avoid duplicate initialization
+
+        # 3️⃣ Ensure we have a project_id – try to pull it from the credential payload if missing
+        if not project_id:
+            try:
+                if cred_json:
+                    payload = json.loads(cred_json)
+                else:
+                    with open(cred_path, "r", encoding="utf-8") as f:
+                        payload = json.load(f)
+                project_id = payload.get("project_id")
+            except Exception as e:
+                logger.debug(f"Unable to extract project_id from credentials: {e}")
+
+        # 4️⃣ Initialise the Firebase app only once (avoid duplicate app errors)
         if not _apps:
             initialize_app(cred, {"projectId": project_id})
         db = firestore.client()
